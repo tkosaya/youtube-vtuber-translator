@@ -120,6 +120,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  // 來自 content.js 的 YouTube 影片播放/暫停狀態同步
+  if (message?.type === "VIDEO_PLAY_STATE") {
+    ensureOffscreenDocument()
+      .then(() => chrome.runtime.sendMessage(message))
+      .then(sendResponse)
+      .catch((err) => sendResponse({ ok: false, error: err.message }));
+    return true;
+  }
+
   // --- 日誌與檔案匯出控制 ---
   if (message?.type === "SAVE_LOGS_TO_FILE") {
     saveLogsToFiles(message.payload)

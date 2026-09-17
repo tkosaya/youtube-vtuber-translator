@@ -30,6 +30,10 @@ let recordTimer = null;
 let audioQueue = [];
 let isProcessingQueue = false;
 let rateLimitCooldownUntil = 0;
+let isVideoPaused = false;
+let audioAnalyser = null;
+let currentSliceMaxVolume = 0;
+let volumeCheckInterval = null;
 
 // --- 診斷與全歷程日誌系統 ---
 let sessionStartTime = 0;
@@ -48,6 +52,24 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type === "STOP_OFFSCREEN_CAPTURE") {
     stopCapture();
     sendResponse({ ok: true });
+    return true;
+  }
+
+  if (message?.type === "VIDEO_PLAY_STATE") {
+    isVideoPaused = Boolean(message.isPaused);
+    if (isVideoPaused) {
+      logEvent("VIDEO_PAUSED", { reason: "YouTube 影片已暫停，暫緩聽譯錄音" });
+      audioSliceBuffer = [];
+      if (mediaRecorder && mediaRecorder.state === "recording") {
+        try { mediaRecorder.stop(); } catch (_) {}
+      }
+    } else {
+      logEvent("VIDEO_RESUMED", { reason: "YouTube 影片恢復播放，繼續聽譯" });
+      if (isRunning && (!mediaRecorder || mediaRecorder.state === "inactive")) {
+        scheduleNextLegacySlice();
+      }
+    }
+    sendResponse({ ok: true, isVideoPaused });
     return true;
   }
 
@@ -112,6 +134,9 @@ function logEvent(eventType, data = {}) {
     SESSION_STOP: "color: #6b7280; font-weight: bold;",
     CHUNK_RECORDED: "color: #3b82f6;",
     QUEUE_COALESCED: "color: #f59e0b; font-weight: bold;",
+    VIDEO_PAUSED: "color: #9333ea; font-weight: bold;",
+    VIDEO_RESUMED: "color: #10b981; font-weight: bold;",
+    SILENCE_SKIPPED: "color: #64748b;",
     API_RESPONSE: "color: #8b5cf6; font-weight: bold;",
     SUBTITLE_DISPLAYED: "color: #06b6d4; font-weight: bold;",
     CHUNK_DROPPED: "color: #ef4444; font-weight: bold;",
@@ -219,7 +244,17 @@ async function startCapture({ streamId, tabId, settings }) {
   const source = audioContext.createMediaStreamSource(stream);
   source.connect(audioContext.destination);
 
+  // 靜音 / 音量偵測分析器 (VAD)
+  try {
+    audioAnalyser = audioContext.createAnalyser();
+    audioAnalyser.fftSize = 256;
+    source.connect(audioAnalyser);
+  } catch (_) {
+    audioAnalyser = null;
+  }
+
   isRunning = true;
+  isVideoPaused = false;
 
   // 2. 根據 liveEngine 啟動對應引擎
   if (currentEngine === "gemini-live") {
@@ -241,6 +276,12 @@ function stopCapture() {
   }
 
   isRunning = false;
+  isVideoPaused = false;
+  if (volumeCheckInterval) {
+    clearInterval(volumeCheckInterval);
+    volumeCheckInterval = null;
+  }
+  audioAnalyser = null;
   
   // 停止各引擎
   stopGeminiLiveEngine();
@@ -798,6 +839,10 @@ function stopLegacyAudioEngine() {
     clearTimeout(recordTimer);
     recordTimer = null;
   }
+  if (volumeCheckInterval) {
+    clearInterval(volumeCheckInterval);
+    volumeCheckInterval = null;
+  }
   if (mediaRecorder && mediaRecorder.state !== "inactive") {
     try {
       mediaRecorder.stop();
@@ -811,10 +856,11 @@ function stopLegacyAudioEngine() {
 }
 
 function scheduleNextLegacySlice() {
-  if (!isRunning || !currentStream) return;
+  if (!isRunning || !currentStream || isVideoPaused) return;
 
   const sliceSeconds = Math.max(1.2, Math.min(15, Number(currentSettings?.audioSliceSeconds || 1.8)));
   const chunks = [];
+  currentSliceMaxVolume = 0;
 
   const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
     ? "audio/webm;codecs=opus"
@@ -827,16 +873,49 @@ function scheduleNextLegacySlice() {
     return;
   }
 
+  // 即時音量抽樣 (每 100ms 測量一次聲音峰值)
+  if (volumeCheckInterval) clearInterval(volumeCheckInterval);
+  volumeCheckInterval = setInterval(() => {
+    if (!audioAnalyser) return;
+    const freq = new Uint8Array(audioAnalyser.frequencyBinCount);
+    audioAnalyser.getByteFrequencyData(freq);
+    let peak = 0;
+    for (let i = 0; i < freq.length; i++) {
+      if (freq[i] > peak) peak = freq[i];
+    }
+    if (peak > currentSliceMaxVolume) currentSliceMaxVolume = peak;
+  }, 100);
+
   mediaRecorder.ondataavailable = (e) => {
     if (e.data && e.data.size > 0) chunks.push(e.data);
   };
 
   mediaRecorder.onstop = () => {
-    if (chunks.length > 0 && isRunning) {
-      const blob = new Blob(chunks, { type: mimeType });
-      enqueueAudioChunk(blob, mimeType, sliceSeconds);
+    if (volumeCheckInterval) {
+      clearInterval(volumeCheckInterval);
+      volumeCheckInterval = null;
     }
-    if (isRunning) {
+
+    const peakVolume = currentSliceMaxVolume;
+    currentSliceMaxVolume = 0;
+
+    if (chunks.length > 0 && isRunning && !isVideoPaused) {
+      const blob = new Blob(chunks, { type: mimeType });
+      // 靜音 / 影片暫停偵測：若此切片完全沒有聲音 (peakVolume < 4)，直接跳過
+      if (peakVolume < 4) {
+        logEvent("SILENCE_SKIPPED", {
+          durationSeconds: sliceSeconds,
+          peakVolume,
+          reason: "分頁音訊為靜音或影片已暫停，略過 API 請求以杜絕模型產生幻覺"
+        });
+        if (audioSliceBuffer.length > 0) {
+          audioSliceBuffer = [];
+        }
+      } else {
+        enqueueAudioChunk(blob, mimeType, sliceSeconds);
+      }
+    }
+    if (isRunning && !isVideoPaused) {
       scheduleNextLegacySlice();
     }
   };
@@ -1184,7 +1263,7 @@ async function callGeminiAudio(sliceBuffer, historyList, settings) {
     recentHistoryText ? `前幾句已完成之直播翻譯上下文（供你理解主詞與話題語境，切勿重複輸出前文）：\n${recentHistoryText}` : "",
     `規則：`,
     `1. 請只輸出翻譯後的${targetLang}，切勿加入任何前綴說明、原文標記或引號。`,
-    `2. 若傳入音訊僅有遊戲背景音樂、尖叫或無清晰說話內容，請直接回傳空字串。`,
+    `2. 絕對核心規則：若傳入音訊為靜音、微弱底噪、只有遊戲背景音樂或無人類清晰說話內容，你必須直接回傳空字串（""）！絕對嚴禁根據前文上下文自編自導、猜測延續或無中生有編造任何對白！`,
     `3. 重要語意完整度標記：若音訊末尾的主播說話明顯尚未講完（例如停在助詞「が、を、に、で、けど、から、ので」或動詞/複合句中途，語意明顯未完），請務必在翻譯結果結尾標註「...（未完）」。`,
     `4. 若音訊末尾已是一句語意完整的句子，請正常輸出整句完整翻譯，絕對不要加「...（未完）」。`
   ].filter(Boolean).join("\n\n");

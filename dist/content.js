@@ -41,7 +41,39 @@ async function init() {
   await refreshSettings();
   ensureOverlay();
   observeNavigation();
-  setInterval(tick, 700);
+  hookVideoEvents();
+  setInterval(() => {
+    hookVideoEvents();
+    tick();
+  }, 700);
+}
+
+function hookVideoEvents() {
+  const video = document.querySelector("video");
+  if (!video || video._vtuberHooked) return;
+  video._vtuberHooked = true;
+
+  video.addEventListener("pause", () => {
+    if (state.audioMode) {
+      chrome.runtime.sendMessage({
+        type: "VIDEO_PLAY_STATE",
+        isPaused: true
+      }).catch(() => {});
+      state.status = "⏸️ 影片已暫停 · 聽譯暫停中";
+      updateOverlay();
+    }
+  });
+
+  video.addEventListener("play", () => {
+    if (state.audioMode) {
+      chrome.runtime.sendMessage({
+        type: "VIDEO_PLAY_STATE",
+        isPaused: false
+      }).catch(() => {});
+      state.status = "🎙️ 直播聽譯中";
+      updateOverlay();
+    }
+  });
 }
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
