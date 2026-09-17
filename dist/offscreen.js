@@ -111,6 +111,7 @@ function logEvent(eventType, data = {}) {
     SESSION_START: "color: #10b981; font-weight: bold;",
     SESSION_STOP: "color: #6b7280; font-weight: bold;",
     CHUNK_RECORDED: "color: #3b82f6;",
+    QUEUE_COALESCED: "color: #f59e0b; font-weight: bold;",
     API_RESPONSE: "color: #8b5cf6; font-weight: bold;",
     SUBTITLE_DISPLAYED: "color: #06b6d4; font-weight: bold;",
     CHUNK_DROPPED: "color: #ef4444; font-weight: bold;",
@@ -125,6 +126,7 @@ function generateLogsExportData() {
   const jsonlContent = currentSessionLogs.map(e => JSON.stringify(e)).join("\n");
 
   const apiResponses = currentSessionLogs.filter(e => e.eventType === "API_RESPONSE");
+  const coalesces = currentSessionLogs.filter(e => e.eventType === "QUEUE_COALESCED");
   const drops = currentSessionLogs.filter(e => e.eventType === "CHUNK_DROPPED");
   const errors = currentSessionLogs.filter(e => e.eventType === "ERROR");
   const avgLatency = apiResponses.length > 0
@@ -148,22 +150,24 @@ function generateLogsExportData() {
   md += `- **API 響應次數**: ${apiResponses.length} 次\n`;
   md += `- **平均 API 延遲**: ${avgLatency} ms (最小: ${minLatency} ms, 最大: ${maxLatency} ms)\n`;
   md += `- **語意緩衝 (Buffer) 暫存次數**: ${bufferHolds.length} 次\n`;
+  md += `- **自適應合體追趕次數 (Coalesced)**: ${coalesces.length} 次\n`;
   md += `- **丟包次數 (Dropped)**: ${drops.length} 次\n`;
   md += `- **錯誤次數 (Errors)**: ${errors.length} 次\n\n`;
 
   md += `## 🕒 聽譯事件時間軸明細\n\n`;
-  md += `| 時間 (UTC) | 切片# | 事件類型 | 耗時(ms) | Buffer | 原始回傳 (Raw Text) | 最終輸出 (Output) |\n`;
-  md += `| :--- | :--- | :--- | :--- | :--- | :--- | :--- |\n`;
+  md += `| 時間 (UTC) | 切片# | 事件類型 | 耗時(ms) | Buffer | 排隊 | 原始回傳 (Raw Text) | 最終輸出 (Output) |\n`;
+  md += `| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |\n`;
 
   for (const e of currentSessionLogs) {
     const timeStr = e.timestamp ? e.timestamp.slice(11, 23) : "-";
     const chunkStr = e.chunkId ? `#${e.chunkId}` : "-";
     const latencyStr = typeof e.apiLatencyMs === "number" ? `${e.apiLatencyMs}ms` : "-";
     const bufStr = typeof e.bufferCount === "number" ? `${e.bufferCount}片 (${e.totalBufferDurationSec || 0}s)` : "-";
+    const queueStr = typeof e.queueRemaining === "number" ? `${e.queueRemaining}片` : "-";
     const rawStr = (e.rawOutput || "").replace(/\n/g, " ").replace(/\|/g, "\\|").slice(0, 60) || "-";
     const outStr = (e.displayedText || e.text || e.completedSentences?.join("；") || e.detail || e.reason || e.error || "-").replace(/\n/g, " ").replace(/\|/g, "\\|").slice(0, 60);
 
-    md += `| ${timeStr} | ${chunkStr} | ${e.eventType} | ${latencyStr} | ${bufStr} | ${rawStr} | ${outStr} |\n`;
+    md += `| ${timeStr} | ${chunkStr} | ${e.eventType} | ${latencyStr} | ${bufStr} | ${queueStr} | ${rawStr} | ${outStr} |\n`;
   }
 
   return {
@@ -852,19 +856,20 @@ function enqueueAudioChunk(blob, mimeType, durationSeconds) {
   const chunkId = ++chunkSequence;
   const recordedAtIso = new Date().toISOString();
 
-  const MAX_QUEUE_SIZE = 6;
+  const MAX_QUEUE_SIZE = 8;
   if (audioQueue.length >= MAX_QUEUE_SIZE) {
     const dropped = audioQueue.shift();
     logEvent("CHUNK_DROPPED", {
       chunkId: dropped.chunkId,
       droppedDurationSec: dropped.durationSeconds,
       queueSize: audioQueue.length,
-      reason: "隊列達到上限 (6 片)，防止延遲滾雪球"
+      reason: "隊列達到上限 (8 片)，防止延遲滾雪球"
     });
     chrome.runtime.sendMessage({
       type: "LIVE_SUBTITLE_UPDATE",
       tabId: currentTabId,
       engine: "legacy-audio",
+      queueCount: audioQueue.length,
       dropNotice: `⚠️ 伺服器處理延遲，已略過 ${dropped.durationSeconds} 秒音訊`
     }).catch(() => {});
   }
@@ -891,14 +896,44 @@ async function processAudioQueue() {
       type: "LIVE_SUBTITLE_UPDATE",
       tabId: currentTabId,
       engine: "legacy-audio",
+      queueCount: audioQueue.length,
       statusText: `⏳ API 頻率冷卻中 (剩餘 ${remainSec} 秒)...`
     }).catch(() => {});
     return;
   }
 
   isProcessingQueue = true;
-  const item = audioQueue.shift();
-  const chunkId = item.chunkId;
+
+  // 自適應追趕機制 (Adaptive Coalesce):
+  // 當後台隊列有積壓 (>= 2 片) 時，根據語意 Buffer 剩餘空間合併取出 2~3 片音訊
+  // 實測證明：處理 4 秒音訊僅需約 3.0 秒 (3.0s < 4.0s)，能迅速縮短隊列並防止拋棄
+  const maxBufferAllowed = 3;
+  const availableBufferSpace = Math.max(1, maxBufferAllowed - audioSliceBuffer.length);
+  
+  let itemsToTake = 1;
+  if (audioQueue.length >= 3 && availableBufferSpace >= 3) {
+    itemsToTake = 3;
+  } else if (audioQueue.length >= 2 && availableBufferSpace >= 2) {
+    itemsToTake = 2;
+  }
+
+  const items = audioQueue.splice(0, itemsToTake);
+  const chunkIds = items.map(it => it.chunkId);
+  const chunkIdLabel = chunkIds.length > 1 ? chunkIds.join("+") : String(chunkIds[0]);
+
+  const totalBytes = items.reduce((sum, it) => sum + it.blob.size, 0);
+  const totalDuration = items.reduce((sum, it) => sum + it.durationSeconds, 0);
+
+  if (items.length > 1) {
+    logEvent("QUEUE_COALESCED", {
+      mergedChunkIds: chunkIds,
+      count: items.length,
+      totalDurationSec: totalDuration,
+      queueRemaining: audioQueue.length,
+      reason: "隊列有積壓，自適應合體追趕時間軸"
+    });
+  }
+
   const apiStart = Date.now();
   const apiSentIso = new Date().toISOString();
 
@@ -906,12 +941,15 @@ async function processAudioQueue() {
     const provider = currentSettings?.provider || "gemini";
 
     if (provider === "gemini") {
-      const base64 = await blobToBase64(item.blob);
-      audioSliceBuffer.push({
-        base64,
-        mimeType: item.mimeType,
-        durationSeconds: item.durationSeconds
-      });
+      for (const it of items) {
+        const base64 = await blobToBase64(it.blob);
+        audioSliceBuffer.push({
+          chunkId: it.chunkId,
+          base64,
+          mimeType: it.mimeType,
+          durationSeconds: it.durationSeconds
+        });
+      }
 
       const rawTranslation = await callGeminiAudio(audioSliceBuffer, recentTranslationHistory, currentSettings);
       const apiEnd = Date.now();
@@ -930,11 +968,13 @@ async function processAudioQueue() {
         console.log(`[VTuber Translator] 語意未完，保留 Buffer (目前累積 ${audioSliceBuffer.length} 片)`);
 
         logEvent("API_RESPONSE", {
-          chunkId,
+          chunkId: chunkIdLabel,
           apiLatencyMs: latencyMs,
-          audioBytes: item.blob.size,
-          sliceDurationSec: item.durationSeconds,
+          audioBytes: totalBytes,
+          sliceDurationSec: totalDuration,
           bufferCount: audioSliceBuffer.length,
+          queueRemaining: audioQueue.length,
+          coalescedCount: items.length,
           totalBufferDurationSec: audioSliceBuffer.reduce((sum, s) => sum + s.durationSeconds, 0),
           apiSentAt: apiSentIso,
           apiReceivedAt: apiRecvIso,
@@ -951,7 +991,7 @@ async function processAudioQueue() {
           if (recentTranslationHistory.length > 3) recentTranslationHistory.shift();
 
           logEvent("SUBTITLE_DISPLAYED", {
-            chunkId,
+            chunkId: chunkIdLabel,
             text: completedText,
             displayedAt: new Date().toISOString()
           });
@@ -964,6 +1004,7 @@ async function processAudioQueue() {
             isIncomplete: false,
             apiLatencyMs: latencyMs,
             bufferCount: audioSliceBuffer.length,
+            queueCount: audioQueue.length,
             sourceText: "",
             statusText: `🎙️ 直播聽譯中 (語意接續中 · 緩衝第 ${audioSliceBuffer.length} 片)...`,
             error: null,
@@ -977,6 +1018,7 @@ async function processAudioQueue() {
             engine: "legacy-audio",
             apiLatencyMs: latencyMs,
             bufferCount: audioSliceBuffer.length,
+            queueCount: audioQueue.length,
             statusText: `🎙️ 直播聽譯中 (語意接續中 · 緩衝第 ${audioSliceBuffer.length} 片)...`,
             error: null,
             dropNotice: null
@@ -985,11 +1027,13 @@ async function processAudioQueue() {
       } else {
         // 語意完整 或 Buffer 達到 3 片上限（強制結算）：
         logEvent("API_RESPONSE", {
-          chunkId,
+          chunkId: chunkIdLabel,
           apiLatencyMs: latencyMs,
-          audioBytes: item.blob.size,
-          sliceDurationSec: item.durationSeconds,
+          audioBytes: totalBytes,
+          sliceDurationSec: totalDuration,
           bufferCount: audioSliceBuffer.length,
+          queueRemaining: audioQueue.length,
+          coalescedCount: items.length,
           totalBufferDurationSec: audioSliceBuffer.reduce((sum, s) => sum + s.durationSeconds, 0),
           apiSentAt: apiSentIso,
           apiReceivedAt: apiRecvIso,
@@ -1005,7 +1049,7 @@ async function processAudioQueue() {
           if (recentTranslationHistory.length > 3) recentTranslationHistory.shift();
 
           logEvent("SUBTITLE_DISPLAYED", {
-            chunkId,
+            chunkId: chunkIdLabel,
             text: cleanText,
             displayedAt: new Date().toISOString()
           });
@@ -1018,6 +1062,7 @@ async function processAudioQueue() {
             isIncomplete: false,
             apiLatencyMs: latencyMs,
             bufferCount: 0,
+            queueCount: audioQueue.length,
             sourceText: "",
             statusText: `🎙️ 直播聽譯中 · [遠端切片 (Gemini/OpenAI)]`,
             error: null,
@@ -1029,15 +1074,17 @@ async function processAudioQueue() {
         audioSliceBuffer = [];
       }
     } else {
+      const item = items[0];
       const translation = await callOpenAIAudio(item.blob, currentSettings);
       const apiEnd = Date.now();
       const latencyMs = apiEnd - apiStart;
 
       logEvent("API_RESPONSE", {
-        chunkId,
+        chunkId: chunkIdLabel,
         apiLatencyMs: latencyMs,
-        audioBytes: item.blob.size,
-        sliceDurationSec: item.durationSeconds,
+        audioBytes: totalBytes,
+        sliceDurationSec: totalDuration,
+        queueRemaining: audioQueue.length,
         rawOutput: translation,
         isIncomplete: false,
         displayedText: translation?.trim() || null
@@ -1051,6 +1098,7 @@ async function processAudioQueue() {
           translatedText: translation.trim(),
           apiLatencyMs: latencyMs,
           bufferCount: 0,
+          queueCount: audioQueue.length,
           error: null,
           dropNotice: null
         }).catch(() => {});

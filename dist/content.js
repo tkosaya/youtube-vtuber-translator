@@ -17,6 +17,7 @@ const state = {
   interimSource: "",
   lastLatencyMs: 0,
   lastBufferCount: 0,
+  lastQueueCount: 0,
   dropNotice: "",
   dropNoticeTimer: null,
   engine: "gemini-live",
@@ -140,6 +141,9 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (typeof message.bufferCount === "number") {
       state.lastBufferCount = message.bufferCount;
     }
+    if (typeof message.queueCount === "number") {
+      state.lastQueueCount = message.queueCount;
+    }
 
     if (message.sourceText) {
       state.interimSource = message.sourceText;
@@ -199,6 +203,7 @@ function resetForVideo() {
   state.dropNotice = "";
   state.lastLatencyMs = 0;
   state.lastBufferCount = 0;
+  state.lastQueueCount = 0;
   if (state.dropNoticeTimer) clearTimeout(state.dropNoticeTimer);
   state.dropNoticeTimer = null;
   state.sessionId = 0;
@@ -593,7 +598,10 @@ function updateOverlay() {
       metaText += ` | ⚡ 延遲: ${(state.lastLatencyMs / 1000).toFixed(2)}s`;
     }
     if (typeof state.lastBufferCount === "number" && state.lastBufferCount > 0) {
-      metaText += ` | 📦 緩衝: ${state.lastBufferCount}片`;
+      metaText += ` | 📦 語意合體: ${state.lastBufferCount}片`;
+    }
+    if (typeof state.lastQueueCount === "number" && state.lastQueueCount > 0) {
+      metaText += ` | ⏳ 隊列排隊: ${state.lastQueueCount}片`;
     }
     metaParts.push(metaText);
   } else {
