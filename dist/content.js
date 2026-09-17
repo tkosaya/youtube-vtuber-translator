@@ -66,6 +66,12 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (state.audioMode) {
       state.enabled = false;
       state.engine = message.engine || "gemini-live";
+      state.displayLines = [];
+      state.lastTranslation = "";
+      state.interimSource = "";
+      state.lastLatencyMs = 0;
+      state.lastBufferCount = 0;
+      state.lastQueueCount = 0;
       if (state.engine === "gemini-live") {
         state.status = "🎙️ 正在連線 Gemini Live 伺服器...";
       } else if (state.engine === "browser-local") {
@@ -79,6 +85,9 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       state.displayLines = [];
       state.lastTranslation = "";
       state.interimSource = "";
+      state.lastLatencyMs = 0;
+      state.lastBufferCount = 0;
+      state.lastQueueCount = 0;
       state.status = "待命";
     }
     updateOverlay();
