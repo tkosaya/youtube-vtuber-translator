@@ -1,0 +1,20 @@
+﻿# OS generated files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs and test exports
+*.log
+logs/
+vtuber-translator-logs/
+*.jsonl
+
+# Temporary files
+*.tmp
+.temp*
+
+# IDE & Editor folders
+.vscode/
+.idea/
+dist_backup_*/
+dist_backup*/

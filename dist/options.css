@@ -1,0 +1,160 @@
+body {
+  margin: 0;
+  color: #111827;
+  background: #f8fafc;
+  font-family: Arial, "Microsoft JhengHei", sans-serif;
+}
+
+main {
+  max-width: 680px;
+  margin: 0 auto;
+  padding: 28px 20px;
+}
+
+h1 {
+  margin: 0 0 22px;
+  font-size: 24px;
+}
+
+label {
+  display: grid;
+  gap: 6px;
+  margin: 14px 0;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+input, select {
+  height: 38px;
+  padding: 0 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  font-size: 14px;
+  background: #fff;
+}
+
+fieldset {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 16px;
+  margin: 18px 0;
+  background: #ffffff;
+}
+
+fieldset.engine-box {
+  border-color: #3b82f6;
+  background: #eff6ff;
+}
+
+legend {
+  font-weight: bold;
+  padding: 0 8px;
+  color: #334155;
+}
+
+.hint {
+  font-size: 12px;
+  color: #64748b;
+  font-weight: normal;
+  margin-top: 2px;
+}
+
+.notice-box {
+  background: #fffbeb;
+  border: 1px solid #fef3c7;
+  color: #92400e;
+  padding: 10px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  margin-top: 12px;
+  line-height: 1.4;
+}
+
+.probe-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 12px 0;
+}
+
+.probe-status {
+  font-size: 13px;
+  color: #64748b;
+}
+
+.probe-report {
+  background: #f1f5f9;
+  border-radius: 6px;
+  padding: 12px;
+  font-size: 13px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.probe-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.probe-item.ok {
+  color: #047857;
+}
+
+.probe-item.warn {
+  color: #b45309;
+}
+
+.probe-item.err {
+  color: #b91c1c;
+}
+
+button {
+  height: 40px;
+  min-width: 140px;
+  border: 0;
+  border-radius: 6px;
+  color: #fff;
+  background: #2563eb;
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+  margin-top: 10px;
+  transition: background 0.15s;
+}
+
+button:hover {
+  background: #1d4ed8;
+}
+
+button.secondary {
+  background: #475569;
+  font-size: 13px;
+  height: 34px;
+  min-width: 120px;
+  margin-top: 0;
+}
+
+button.secondary:hover {
+  background: #334155;
+}
+
+.checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.checkbox input {
+  width: 18px;
+  height: 18px;
+}
+
+#message {
+  margin-top: 14px;
+  min-height: 22px;
+  color: #047857;
+  font-weight: 500;
+}

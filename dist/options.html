@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8">
+    <title>VTuber Translator 設定</title>
+    <link rel="stylesheet" href="options.css">
+  </head>
+  <body>
+    <main>
+      <h1>VTuber Translator 設定</h1>
+      
+      <!-- 引擎選擇 -->
+      <fieldset class="engine-box">
+        <legend>直播聽譯核心引擎</legend>
+        <label>
+          選擇引擎
+          <select id="liveEngine">
+            <option value="gemini-live">⚡ Gemini Live 串流模式 (推薦：WebSocket 雙向串流，極致延遲 &lt; 1 秒)</option>
+            <option value="legacy-audio">☁️ 遠端切片模式 (每隔數秒錄音一次，支援 Gemini / OpenAI)</option>
+            <option value="browser-local">🖥️ 本機串流模式 (實驗性：Chrome Web Speech + 內建翻譯)</option>
+          </select>
+        </label>
+      </fieldset>
+
+      <!-- 本機模式診斷與說明區塊 -->
+      <fieldset id="localEngineBox" class="provider-box">
+        <legend>🖥️ Chrome 本機串流引擎狀態與診斷</legend>
+        <p class="hint">利用 Chrome 內建 Web Speech 與 Built-in AI Translator，直接在瀏覽器端將直播聲音轉譯為繁中，免 API 金鑰、零費用、無 429 限制。</p>
+        
+        <div class="probe-controls">
+          <button id="runProbeBtn" type="button" class="secondary">🔍 執行本機相容性診斷</button>
+          <span id="probeStatus" class="probe-status">尚未檢測</span>
+        </div>
+
+        <div id="probeReport" class="probe-report" style="display: none;">
+          <div class="probe-item" id="pWebSpeech">Web Speech API：檢測中...</div>
+          <div class="probe-item" id="pProcessLocally">本機辨識屬性 (processLocally)：檢測中...</div>
+          <div class="probe-item" id="pAudioTrack">分頁音訊軌輸入支援：檢測中...</div>
+          <div class="probe-item" id="pJapanesePack">日文語音辨識模型：檢測中...</div>
+          <div class="probe-item" id="pTranslator">Chrome Translator API：檢測中...</div>
+          <div class="probe-item" id="pTranslatePair">日翻繁中 (ja ➔ zh-Hant) 配對：檢測中...</div>
+        </div>
+
+        <div class="notice-box">
+          ⚠️ <strong>注意事項</strong>：本機翻譯使用 Chrome 輕量模型，不支援提示詞式的 VTuber 專屬詞庫（Glossary），人名與特殊綽號翻譯品質可能與雲端大模型不同。
+        </div>
+      </fieldset>
+
+      <!-- 遠端切片模式區塊 (Gemini / OpenAI) -->
+      <div id="remoteEngineBox">
+        <label>
+          遠端 AI 提供商 (Provider)
+          <select id="provider">
+            <option value="gemini">Google Gemini（推薦，有免費額度、速度極快）</option>
+            <option value="openai">OpenAI（GPT 系列）</option>
+          </select>
+        </label>
+
+        <fieldset id="geminiFieldset" class="provider-box">
+          <legend>Google Gemini 設定</legend>
+          <label>
+            Gemini API Key
+            <input id="geminiApiKey" type="password" autocomplete="off" placeholder="AIzaSy...">
+          </label>
+          <label>
+            Gemini 模型名稱 (切片/字幕翻譯)
+            <input id="geminiModel" type="text" placeholder="gemini-3.8-flash">
+          </label>
+          <p class="hint">⚡ <strong>Gemini Live 串流模式</strong> 自動採用 <code>gemini-3.8-live</code> 進行 WebSocket 極低延遲同傳。<br>一般切片/字幕翻譯預設採用 <code>gemini-3.8-flash</code>（<code>gemini-2.5-flash</code> 已由 Google 停用）。<br>前往 <a href="https://aistudio.google.com/" target="_blank">Google AI Studio</a> 即可申請免費 API Key。</p>
+        </fieldset>
+
+        <fieldset id="openaiFieldset" class="provider-box">
+          <legend>OpenAI 設定</legend>
+          <label>
+            OpenAI API Key
+            <input id="openaiApiKey" type="password" autocomplete="off" placeholder="sk-...">
+          </label>
+          <label>
+            OpenAI 模型名稱
+            <input id="openaiModel" type="text" placeholder="gpt-4o-mini">
+          </label>
+        </fieldset>
+
+        <label id="audioSliceRow">
+          遠端切片秒數（秒，僅「遠端切片模式」生效）
+          <input id="audioSliceSeconds" type="number" min="1.2" max="8" step="0.2">
+          <span class="hint">推薦 1.5 ~ 2.0 秒（預設 1.8 秒極速同傳），配合智慧語意 Buffer 自動暫緩與合併未完長句。</span>
+        </label>
+      </div>
+
+      <!-- 共用顯示與文字設定 -->
+      <fieldset class="general-box">
+        <legend>畫面字幕與偏好設定</legend>
+        <label>
+          目標語言
+          <input id="targetLang" type="text" placeholder="繁體中文">
+        </label>
+        <label>
+          字幕模式批次秒數 (有 CC 字幕時)
+          <input id="batchSeconds" type="number" min="5" max="60" step="1">
+        </label>
+        <label>
+          字幕模式最少累積句數
+          <input id="minBatchLines" type="number" min="1" max="8" step="1">
+        </label>
+        <label>
+          字幕字體大小 (px)
+          <input id="fontSize" type="number" min="16" max="56" step="1">
+        </label>
+        <label>
+          字幕背景透明度 (0 ~ 1)
+          <input id="backgroundOpacity" type="number" min="0" max="1" step="0.05">
+        </label>
+        <label>
+          字幕最多顯示行數 (1 ~ 5 行)
+          <input id="maxSubtitleLines" type="number" min="1" max="5" step="1">
+          <span class="hint">推薦 2 ~ 3 行。多行可保留上下文、避免講話快時字幕瞬間被洗掉，並清晰分離斷句。</span>
+        </label>
+        <label class="checkbox">
+          <input id="glossaryEnabled" type="checkbox">
+          啟用 hololive / VTuber 專屬詞庫 (僅遠端模式支援)
+        </label>
+        <label class="checkbox">
+          <input id="autoSaveLogs" type="checkbox">
+          停止聽譯時自動匯出日誌文件 (儲存至 Downloads/vtuber-translator-logs)
+        </label>
+      </fieldset>
+
+      <button id="save" type="button">儲存設定</button>
+      <div id="message" role="status"></div>
+
+      <!-- 日誌與 Agent 診斷專區 -->
+      <fieldset class="general-box" style="margin-top: 20px;">
+        <legend>📊 聽譯日誌與 Agent 共享診斷數據</legend>
+        <p class="hint">系統會即時記錄每個切片的時長、大小、送出時間、API 延遲（毫秒）、Buffer 狀態與模型原始輸出。檔案儲存於 <code>Downloads/vtuber-translator-logs/</code>，便於與其他 Agent 共享進行語速與效能分析。</p>
+        <div style="display: flex; gap: 10px; margin-top: 10px;">
+          <button id="exportLogsBtn" type="button" class="secondary" style="flex: 1;">📥 立即匯出日誌 (.jsonl / .md)</button>
+          <button id="clearLogsBtn" type="button" class="secondary" style="flex: 1;">🗑️ 清空目前記錄</button>
+        </div>
+        <div id="logsStatusMsg" style="margin-top: 8px; font-size: 13px; color: #2563eb;"></div>
+      </fieldset>
+    </main>
+    <script src="options.js"></script>
+  </body>
+</html>

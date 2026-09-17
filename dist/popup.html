@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8">
+    <title>VTuber Translator</title>
+    <link rel="stylesheet" href="popup.css">
+  </head>
+  <body>
+    <main>
+      <h1>VTuber Translator</h1>
+      <div id="providerInfo" class="provider-info">模型：載入中...</div>
+      <div id="status" class="status">讀取中...</div>
+
+      <div class="action-section">
+        <button id="toggleAudio" type="button" class="btn-live">🎙️ 啟動直播聽譯 (無字幕適用)</button>
+        <button id="toggle" type="button">啟用字幕翻譯 (有字幕適用)</button>
+      </div>
+
+      <button id="options" type="button" class="secondary">⚙️ 設定 (API Key / 提供商)</button>
+      <button id="exportLogs" type="button" class="secondary">📥 匯出聽譯日誌文件 (.jsonl / .md)</button>
+      <div id="logMsg" style="font-size: 12px; color: #2563eb; text-align: center; margin-top: 4px;"></div>
+      <p id="hint" class="hint">看直播無字幕時請點「直播聽譯」；看一般有 CC 字幕的影片請點「字幕翻譯」。</p>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+</html>
